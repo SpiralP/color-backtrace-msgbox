@@ -26,7 +26,6 @@ failure-bt = ["failure"]
 gimli-symbolize = ["backtrace/gimli-symbolize"]
 
 [dependencies]
-termcolor = "1.0"
-atty = "0.2"
 failure = { version = "0.1", optional = true }
 backtrace = "0.3"
+msgbox = "0.4.0"

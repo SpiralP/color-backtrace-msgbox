@@ -43,13 +43,9 @@ use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::panic::PanicInfo;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 #[cfg(feature = "failure-bt")]
 pub mod failure;
-
-// Re-export termcolor so users don't have to depend on it themselves.
-pub use termcolor;
 
 // ============================================================================================== //
 // [Result / Error types]                                                                         //
@@ -101,6 +97,10 @@ pub fn create_panic_handler(
             // Panicing while handling a panic would send us into a deadlock,
             // so we just print the error to stderr instead.
             eprintln!("Error while printing panic: {:?}", e);
+        } else {
+            let title = &settings_lock.message;
+            let content = String::from_utf8_lossy(&settings_lock.out);
+            msgbox::create(title, &content, msgbox::IconType::None);
         }
     })
 }
@@ -126,57 +126,6 @@ struct Frame {
 }
 
 impl Frame {
-    /// Heuristically determine whether the frame is likely to be part of a
-    /// dependency.
-    ///
-    /// If it fails to detect some patterns in your code base, feel free to drop
-    /// an issue / a pull request!
-    fn is_dependency_code(&self) -> bool {
-        const SYM_PREFIXES: &[&str] = &[
-            "std::",
-            "core::",
-            "backtrace::backtrace::",
-            "_rust_begin_unwind",
-            "color_traceback::",
-            "__rust_",
-            "___rust_",
-            "__pthread",
-            "_main",
-            "main",
-            "__scrt_common_main_seh",
-            "BaseThreadInitThunk",
-            "_start",
-            "__libc_start_main",
-            "start_thread",
-        ];
-
-        // Inspect name.
-        if let Some(ref name) = self.name {
-            if SYM_PREFIXES.iter().any(|x| name.starts_with(x)) {
-                return true;
-            }
-        }
-
-        const FILE_PREFIXES: &[&str] = &[
-            "/rustc/",
-            "src/libstd/",
-            "src/libpanic_unwind/",
-            "src/libtest/",
-        ];
-
-        // Inspect filename.
-        if let Some(ref filename) = self.filename {
-            let filename = filename.to_string_lossy();
-            if FILE_PREFIXES.iter().any(|x| filename.starts_with(x))
-                || filename.contains("/.cargo/registry/src/")
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
     /// Heuristically determine whether a frame is likely to be a post panic
     /// frame.
     ///
@@ -246,9 +195,7 @@ impl Frame {
         for (line, cur_line_no) in surrounding_src.zip(start_line..) {
             if cur_line_no == lineno {
                 // Print actual source line with brighter color.
-                s.out.set_color(&s.colors.selected_src_ln)?;
                 writeln!(s.out, "{:>8} > {}", cur_line_no, line?)?;
-                s.out.reset()?;
             } else {
                 writeln!(s.out, "{:>8} │ {}", cur_line_no, line?)?;
             }
@@ -258,8 +205,6 @@ impl Frame {
     }
 
     fn print(&self, i: usize, s: &mut Settings) -> IOResult {
-        let is_dependency_code = self.is_dependency_code();
-
         // Print frame index.
         write!(s.out, "{:>2}: ", i)?;
 
@@ -276,29 +221,16 @@ impl Frame {
             && name[name.len() - 16..].chars().all(|x| x.is_digit(16));
 
         // Print function name.
-        s.out.set_color(if is_dependency_code {
-            &s.colors.dependency_code
-        } else {
-            &s.colors.crate_code
-        })?;
-
         if has_hash_suffix {
             write!(s.out, "{}", &name[..name.len() - 19])?;
             if s.strip_function_hash {
                 writeln!(s.out)?;
             } else {
-                s.out.set_color(if is_dependency_code {
-                    &s.colors.dependency_code_hash
-                } else {
-                    &s.colors.crate_code_hash
-                })?;
                 writeln!(s.out, "{}", &name[name.len() - 19..])?;
             }
         } else {
             writeln!(s.out, "{}", name)?;
         }
-
-        s.out.reset()?;
 
         // Print source location, if known.
         if let Some(ref file) = self.filename {
@@ -324,63 +256,12 @@ impl Frame {
 // [Settings]                                                                                     //
 // ============================================================================================== //
 
-/// Color scheme definition.
-#[derive(Debug)]
-pub struct ColorScheme {
-    pub frames_omitted_msg: ColorSpec,
-    pub header: ColorSpec,
-    pub msg_loc_prefix: ColorSpec,
-    pub src_loc: ColorSpec,
-    pub src_loc_separator: ColorSpec,
-    pub env_var: ColorSpec,
-    pub dependency_code: ColorSpec,
-    pub dependency_code_hash: ColorSpec,
-    pub crate_code: ColorSpec,
-    pub crate_code_hash: ColorSpec,
-    pub selected_src_ln: ColorSpec,
-}
-
-impl ColorScheme {
-    /// Helper to create a new `ColorSpec` & set a few properties in one wash.
-    fn cs(fg: Option<Color>, intense: bool, bold: bool) -> ColorSpec {
-        let mut cs = ColorSpec::new();
-        cs.set_fg(fg);
-        cs.set_bold(bold);
-        cs.set_intense(intense);
-        cs
-    }
-
-    /// The classic `color-backtrace` scheme, as shown in the screenshots.
-    pub fn classic() -> Self {
-        Self {
-            frames_omitted_msg: Self::cs(Some(Color::Cyan), true, false),
-            header: Self::cs(Some(Color::Red), false, false),
-            msg_loc_prefix: Self::cs(Some(Color::Cyan), false, false),
-            src_loc: Self::cs(Some(Color::Magenta), false, false),
-            src_loc_separator: Self::cs(Some(Color::White), false, false),
-            env_var: Self::cs(None, false, true),
-            dependency_code: Self::cs(Some(Color::Green), false, false),
-            dependency_code_hash: Self::cs(Some(Color::Black), true, false),
-            crate_code: Self::cs(Some(Color::Red), true, false),
-            crate_code_hash: Self::cs(Some(Color::Black), true, false),
-            selected_src_ln: Self::cs(None, false, true),
-        }
-    }
-}
-
-impl Default for ColorScheme {
-    fn default() -> Self {
-        Self::classic()
-    }
-}
-
 /// Configuration for panic printing.
 pub struct Settings {
     message: String,
-    out: Box<dyn WriteColor + Send>,
+    out: Vec<u8>,
     verbosity: Verbosity,
     strip_function_hash: bool,
-    colors: ColorScheme,
 }
 
 impl Default for Settings {
@@ -388,13 +269,8 @@ impl Default for Settings {
         Self {
             verbosity: Verbosity::from_env(),
             message: "The application panicked (crashed).".to_owned(),
-            out: Box::new(StandardStream::stderr(if atty::is(atty::Stream::Stderr) {
-                ColorChoice::Always
-            } else {
-                ColorChoice::Never
-            })),
+            out: Vec::new(),
             strip_function_hash: false,
-            colors: ColorScheme::classic(),
         }
     }
 }
@@ -405,7 +281,6 @@ impl fmt::Debug for Settings {
             .field("message", &self.message)
             .field("verbosity", &self.verbosity)
             .field("strip_function_hash_part", &self.strip_function_hash)
-            .field("colors", &self.colors)
             .finish()
     }
 }
@@ -416,28 +291,11 @@ impl Settings {
         Self::default()
     }
 
-    /// Alter the color scheme.
-    ///
-    /// Defaults to `ColorScheme::classic()`.
-    pub fn color_scheme(mut self, colors: ColorScheme) -> Self {
-        self.colors = colors;
-        self
-    }
-
     /// Controls the "greeting" message of the panic.
     ///
     /// Defaults to `"The application panicked (crashed)"`.
     pub fn message(mut self, message: impl Into<String>) -> Self {
         self.message = message.into();
-        self
-    }
-
-    /// Controls where output is directed to.
-    ///
-    /// Defaults to colorized output to `stderr` when attached to a tty
-    /// or colorless output when not.
-    pub fn output_stream(mut self, out: Box<dyn WriteColor + Send>) -> Self {
-        self.out = out;
         self
     }
 
@@ -495,9 +353,7 @@ pub fn print_backtrace(trace: &backtrace::Backtrace, settings: &mut Settings) ->
 
     if top_cutoff != 0 {
         let text = format!("({} post panic frames hidden)", top_cutoff);
-        s.out.set_color(&s.colors.frames_omitted_msg)?;
         writeln!(s.out, "{:^80}", text)?;
-        s.out.reset()?;
     }
 
     // Turn them into `Frame` objects and print them.
@@ -518,9 +374,7 @@ pub fn print_backtrace(trace: &backtrace::Backtrace, settings: &mut Settings) ->
             "({} runtime init frames hidden)",
             num_frames - bottom_cutoff
         );
-        s.out.set_color(&s.colors.frames_omitted_msg)?;
         writeln!(s.out, "{:^80}", text)?;
-        s.out.reset()?;
     }
 
     Ok(())
@@ -529,9 +383,7 @@ pub fn print_backtrace(trace: &backtrace::Backtrace, settings: &mut Settings) ->
 /// Pretty-prints a [`PanicInfo`](PanicInfo) struct according to the given
 /// settings.
 pub fn print_panic_info(pi: &PanicInfo, s: &mut Settings) -> IOResult {
-    s.out.set_color(&s.colors.header)?;
     writeln!(s.out, "{}", s.message)?;
-    s.out.reset()?;
 
     // Print panic message.
     let payload = pi
@@ -542,20 +394,14 @@ pub fn print_panic_info(pi: &PanicInfo, s: &mut Settings) -> IOResult {
         .unwrap_or("<non string panic payload>");
 
     write!(s.out, "Message:  ")?;
-    s.out.set_color(&s.colors.msg_loc_prefix)?;
     writeln!(s.out, "{}", payload)?;
-    s.out.reset()?;
 
     // If known, print panic location.
     write!(s.out, "Location: ")?;
     if let Some(loc) = pi.location() {
-        s.out.set_color(&s.colors.src_loc)?;
         write!(s.out, "{}", loc.file())?;
-        s.out.set_color(&s.colors.src_loc_separator)?;
         write!(s.out, ":")?;
-        s.out.set_color(&s.colors.src_loc)?;
         writeln!(s.out, "{}", loc.line())?;
-        s.out.reset()?;
     } else {
         writeln!(s.out, "<unknown>")?;
     }
@@ -563,9 +409,7 @@ pub fn print_panic_info(pi: &PanicInfo, s: &mut Settings) -> IOResult {
     // Print some info on how to increase verbosity.
     if s.verbosity == Verbosity::Minimal {
         write!(s.out, "\nBacktrace omitted. Run with ")?;
-        s.out.set_color(&s.colors.env_var)?;
         write!(s.out, "RUST_BACKTRACE=1")?;
-        s.out.reset()?;
         writeln!(s.out, " environment variable to display it.")?;
     }
     if s.verbosity <= Verbosity::Medium {
@@ -575,9 +419,7 @@ pub fn print_panic_info(pi: &PanicInfo, s: &mut Settings) -> IOResult {
         }
 
         write!(s.out, "Run with ")?;
-        s.out.set_color(&s.colors.env_var)?;
         write!(s.out, "RUST_BACKTRACE=full")?;
-        s.out.reset()?;
         writeln!(s.out, " to include source snippets.")?;
     }
 
