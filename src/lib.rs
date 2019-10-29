@@ -93,6 +93,8 @@ pub fn create_panic_handler(
     let settings_mutex = Mutex::new(settings);
     Box::new(move |pi| {
         let mut settings_lock = settings_mutex.lock().unwrap();
+        settings_lock.out.clear();
+
         if let Err(e) = print_panic_info(pi, &mut *settings_lock) {
             // Panicing while handling a panic would send us into a deadlock,
             // so we just print the error to stderr instead.
@@ -383,8 +385,6 @@ pub fn print_backtrace(trace: &backtrace::Backtrace, settings: &mut Settings) ->
 /// Pretty-prints a [`PanicInfo`](PanicInfo) struct according to the given
 /// settings.
 pub fn print_panic_info(pi: &PanicInfo, s: &mut Settings) -> IOResult {
-    writeln!(s.out, "{}", s.message)?;
-
     // Print panic message.
     let payload = pi
         .payload()
@@ -393,18 +393,17 @@ pub fn print_panic_info(pi: &PanicInfo, s: &mut Settings) -> IOResult {
         .or_else(|| pi.payload().downcast_ref::<&str>().cloned())
         .unwrap_or("<non string panic payload>");
 
-    write!(s.out, "Message:  ")?;
-    writeln!(s.out, "{}", payload)?;
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("<unnamed>");
 
-    // If known, print panic location.
-    write!(s.out, "Location: ")?;
-    if let Some(loc) = pi.location() {
-        write!(s.out, "{}", loc.file())?;
-        write!(s.out, ":")?;
-        writeln!(s.out, "{}", loc.line())?;
-    } else {
-        writeln!(s.out, "<unknown>")?;
-    }
+    // The current implementation always returns `Some`.
+    let location = pi.location().unwrap();
+
+    let _ = writeln!(
+        s.out,
+        "thread '{}' panicked at '{}', {}",
+        name, payload, location
+    );
 
     // Print some info on how to increase verbosity.
     if s.verbosity == Verbosity::Minimal {
@@ -431,3 +430,10 @@ pub fn print_panic_info(pi: &PanicInfo, s: &mut Settings) -> IOResult {
 }
 
 // ============================================================================================== //
+
+#[test]
+fn it_works() {
+    install_with_settings(Settings::new().verbosity(Verbosity::Full));
+
+    panic!("OH NO!");
+}
