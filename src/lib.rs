@@ -102,6 +102,7 @@ pub fn create_panic_handler(
         } else {
             let title = &settings_lock.message;
             let content = String::from_utf8_lossy(&settings_lock.out);
+            println!("{}", content);
             msgbox::create(title, &content, msgbox::IconType::None);
         }
     })
