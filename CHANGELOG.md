@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
-## [v0.3.0] (2019-10-XX)
+## [v0.3.0] (2019-11-12)
 
 #### Added
 - Custom `ColorScheme` support
@@ -9,7 +9,7 @@ All notable changes to this project will be documented in this file.
   - This is done by adding `default-features = false` to the `Cargo.toml`
     dependency entry for `color-backtrace`
   - Disabling it reduces transitive dependencies from ~50 → ~10
-  - However, you'll pay for it with [inaccurate source info](bt-bug) on macOS
+  - However, you'll pay for it with [inaccurate source info](https://github.com/athre0z/color-backtrace/issues/2) on macOS
     and Linux
 
 #### Changed
@@ -20,6 +20,9 @@ All notable changes to this project will be documented in this file.
   - Hash part color is now controlled via `ColorScheme`
 
 #### Removed
+- `Colorize`, `ColorizedStderrOutput`, `StreamOutput`, `PanicOutputStream`
+  - This functionality is now all provided by the `termcolor` crate
+  - `termcolor` is re-exported in the root of `color_backtrace`
 - Lots of transitive dependencies!
 
 ## [v0.2.3] (2019-08-23)
